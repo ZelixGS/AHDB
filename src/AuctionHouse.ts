@@ -49,7 +49,7 @@ async function ValidateInput(Input:string) {
         //Get first Regex Match, then check if the Database has Said Item
         //If Data is found, assign to Item properties, and return
         let ID = parseInt(Matches[0])
-        let Name = await GetDataFromDB(`select * from ItemIDs where Rank1 = ${ID} or Rank2 = ${ID} or Rank3 = ${ID}`)
+        let Name = await GetDataFromDB(`select * from ItemIDs where R1 = ${ID} or R2 = ${ID} or R3 = ${ID}`)
         if (Name != null) {
             Item.ID = ID;
             Item.Name = Name;
@@ -138,13 +138,13 @@ async function GetItemID(text: string, Rank: number = -1): Promise<number> {
     try {
         let IDs: any = await GetDataFromDB(sql)
         if (Rank == -1) {
-            if (IDs.Rank3 != null) return IDs.Rank3
-            if (IDs.Rank2 != null) return IDs.Rank2
-            if (IDs.Rank1 != null) return IDs.Rank1
+            if (IDs.R3 != null) return IDs.R3
+            if (IDs.R2 != null) return IDs.R2
+            if (IDs.R1 != null) return IDs.R1
         } else {
-            if (Rank == 3 && IDs.Rank3 != null) return IDs.Rank3
-            if (Rank == 2 && IDs.Rank2 != null) return IDs.Rank2
-            if (Rank == 1 && IDs.Rank1 != null) return IDs.Rank1 
+            if (Rank == 3 && IDs.R3 != null) return IDs.R3
+            if (Rank == 2 && IDs.R2 != null) return IDs.R2
+            if (Rank == 1 && IDs.R1 != null) return IDs.R1 
         }
     } catch (error) {
         return -1
