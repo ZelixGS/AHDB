@@ -3,29 +3,41 @@ import fs from 'fs';
 import { ItemData, Material } from './interfaces/AuctionHouseData.js';
 import { Get, DownloadAH } from './WoWAPI.js';
 import { CronJob } from 'cron';
-import { json } from 'stream/consumers';
     
-let Database = new sqlite3.Database('./data/Recipes.db', (err) => {
+// TODO:
+// [ ] Prevent potential SQLInjections
+// [ ] Alias - Sophic Devotion -> Enchant Weapon - Sophic Devotion, Feasts, Cringebark
+// [X] Item with Ranks return Ranks 1-3 price from AH (Excluding Materials)
+// [ ] Items with Multiple Recipes (Feasts)
+// [X] Add Data Age in Footer (Data was pulled 39 Minutes Ago)
+// [X] Reformat Discord Print Out Again (Still not Super Clear)
+// [X] Custom Emoji Support? For GoldSilverCopper, and Rank1-3
+// [ ] Also API fall back
+
+
+const DB = new sqlite3.Database('./data/Recipes.db', (err) => {
     if (err) return console.error(err.message);
     console.log('Connected to ItemData Database.');
 });
 
-// Everyhour: '1 0-23 * * *',
-// Every Minute:
-var job = new CronJob(
-	'30 0-23 * * *',
+// CronJob to get fetch latest Commodities Database from Blizzard.
+// Occurs every once an hour, on the half hour.
+const GetLatestCommodities = new CronJob(
+	'32 0-23 * * *',
 	async function() {
 		console.warn('Downloading Latest Commotities.');
         let check = await DownloadAH()
         if (check != null) {
-            ahjson = check
+            Commodities = check
+            CommoditiesLastPull = Date.now()
         }
 	},
 	null,
 	true,
 );
 
-let ahjson = JSON.parse(fs.readFileSync("./data/commodities.json", 'utf8'))
+let Commodities = JSON.parse(fs.readFileSync("./data/commodities.json", 'utf8'))
+let CommoditiesLastPull: number = fs.statSync("./data/commodities.json").mtimeMs;
 
 //Exposed function that is called from the Discord Command
 //Validate Input is correct first so we don't have to worry about it later.
@@ -69,23 +81,11 @@ async function ValidateInput(Input:string) {
     return Item
 }
 
-async function GetDataFromDB(query: string): Promise<any> {
-    try {
-        return new Promise((resolve, reject) => {
-            Database.get(query, (err:any, row) => {
-                if (err) reject(err);
-                resolve(row);
-            });
-        });
-    } catch (error: any) {
-        console.error(error.message)
-        return null
-    }
-}
-async function ItemBuilder(ID: number): Promise<ItemData> {
+async function ItemBuilder(ID: number, SearchByName: boolean = false): Promise<ItemData> {
     let Item: ItemData = {
         ID: -1,
         Name: "",
+        DataAge: CommoditiesLastPull
     };
     let iData = await GetItemData(ID);
     if (iData.ID != null) Item.ID = iData.ID;
@@ -94,24 +94,32 @@ async function ItemBuilder(ID: number): Promise<ItemData> {
     if (iData.Icon != null) Item.Icon = iData.Icon
     if (iData.Quality != null) Item.Quality = iData.Quality;
     if (iData.PurchasedPrice != null) Item.PurchasedPrice = iData.PurchasedPrice;
-
     let Price = GetItemPrice(Item.ID)
     if (Price != 0) Item.Price = Price
 
-    let rData = await GetRecipeData(Item.Name)
-    if (rData != null) {
-        if (rData.Crafted != null) Item.Crafted = rData.Crafted
-        if (rData.Credit != null) Item.Credit = rData.Credit
+    let Rank1 = await GetItemID(Item.Name, 1)
+    let Rank2 = await GetItemID(Item.Name, 2)
+    let Rank3 = await GetItemID(Item.Name, 3)
+    if (Rank1 != -1) Item.R1Price = GetItemPrice(Rank1)
+    if (Rank2 != -1) Item.R2Price = GetItemPrice(Rank2)
+    if (Rank3 != -1) Item.R3Price = GetItemPrice(Rank3)
+
+
+    let Recipes = await GetRecipes(Item.Name)
+    if (Recipes.length == 0) return Item
+    for (const Recipe of Recipes) {
+        Item.Crafted = Recipe.Crafted
+        Item.Credit = Recipe.Credit
         Item.Materials = []
         let total: number = 0;
-        for (let i = 1; i < 8; i++) {
-            if (rData[`M${i}`] == null) continue; 
-            let id: number = await GetItemID(rData[`M${i}`]);
+        for (let i = 1; i < 9; i++) {
+            if (Recipe[`M${i}`] == null) continue; 
+            let id: number = await GetItemID(Recipe[`M${i}`]);
             let data: Material = {
                 ID: id,
-                Name: rData[`M${i}`],
+                Name: Recipe[`M${i}`],
                 Price: GetItemPrice(id),
-                Amount: rData[`M${i}A`],
+                Amount: Recipe[`M${i}A`],
             }
             total += (data.Price * data.Amount);
             Item.Materials.push(data);
@@ -122,34 +130,53 @@ async function ItemBuilder(ID: number): Promise<ItemData> {
 }
 
 
-async function GetRecipeData(Name: string): Promise<any> {
-    let rData = await GetDataFromDB(`SELECT * from Recipes where Name = \"${Name}\" COLLATE NOCASE`)
-    if (rData != null || rData != undefined) return rData;
-    return null;
+// Returns All Rows found by Select from the Recipes Table
+// Certain Items have multiple Recipes, such as Grand Banquet of the Kalu'ak.
+async function GetRecipes(Name: string): Promise<Array<any>> {
+    return new Promise((resolve, reject) => {
+        DB.all(`SELECT * FROM Recipes WHERE Name = ? COLLATE NOCASE`, Name, (err, rows) => {
+            if (err) {
+                console.log(`[GetRecipes] ${err}`)
+                reject(err);
+            }
+            resolve(rows);
+        });
+    });
 }
+
+
 
 // Handler for WoW's Ability to have different rank of items.
 // Materials in WoW, can have up to three ranks, each has a different item id per rank.
 // Don't have to worry about this on eqiuipable gear, as rank just scales the item's level.
 // Unless we demand a special rank, we default to returning Rank 3 as it's the most commonly used.
-async function GetItemID(text: string, Rank: number = -1): Promise<number> {
-    let sql = `SELECT * FROM ItemIDs WHERE Name = \"${text}\" COLLATE NOCASE`;
-    let IDs: any = -1
-    try {
-        let IDs: any = await GetDataFromDB(sql)
+async function GetItemID(Input: string, Rank: number = -1): Promise<number> {
+    let Result = await GetDataFromDB(`SELECT * FROM ItemIDs WHERE Name = \"${Input}\" COLLATE NOCASE`)
+    if (Result != null) {
         if (Rank == -1) {
-            if (IDs.R3 != null) return IDs.R3
-            if (IDs.R2 != null) return IDs.R2
-            if (IDs.R1 != null) return IDs.R1
+            if (Result.R3 != null) return Result.R3
+            if (Result.R2 != null) return Result.R2
+            if (Result.R1 != null) return Result.R1
         } else {
-            if (Rank == 3 && IDs.R3 != null) return IDs.R3
-            if (Rank == 2 && IDs.R2 != null) return IDs.R2
-            if (Rank == 1 && IDs.R1 != null) return IDs.R1 
+            if (Rank == 3 && Result.R3 != null) return Result.R3
+            if (Rank == 2 && Result.R2 != null) return Result.R2
+            if (Rank == 1 && Result.R1 != null) return Result.R1 
         }
-    } catch (error) {
-        return -1
     }
-    return -1
+    console.log(`[GetItemID][${Input}] Database did not get any results.`)
+    return -1;
+}
+
+async function GetDataFromDB(query: string): Promise<any> {
+    return new Promise((resolve, reject) => {
+        DB.get(query, (err:any, row) => {
+            if (err) {
+                console.log(`[${err}] ${query}`)
+                reject(err);
+            }
+            resolve(row);
+         });
+    });
 }
 
 async function GetItemData(ID:number) {
@@ -161,7 +188,7 @@ async function GetItemData(ID:number) {
             console.error(`[ItemData] API returned no results.`)
             return null;
         }
-        Database.run('INSERT INTO ItemData(ID, Name, Description, Quality, Class, Subclass, InventoryType, PurchasePrice, SellPrice, Icon) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', 
+        DB.run('INSERT INTO ItemData(ID, Name, Description, Quality, Class, Subclass, InventoryType, PurchasePrice, SellPrice, Icon) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', 
                     [i.id, i.name, i.description, i.quality.name, i.item_class.name, i.item_subclass.name, i.inventory_type.name, i.purchase_price, i.sell_price, p.assets[0].value], (err) => {
                         if (err) return console.log(err.message);
                         console.log(`[Database] Inserted Row into ItemData : (${i.id}, ${i.name})`);
@@ -171,31 +198,15 @@ async function GetItemData(ID:number) {
     return Data
 }
 
-async function GetIcon(ID: number): Promise<string> {
-    let Icon = await GetDataFromDB(`SELECT * FROM Icons WHERE ID = ${ID}`);
-    if (Icon != null) return Icon.URL;
-    let API = await Get(`https://us.api.blizzard.com/data/wow/media/item/${ID}?namespace=static-us&locale=en_US`)
-    // console.log(API);
-    if (API != null) {
-        let IconURL: string = API.assets[0].value
-        Database.run('INSERT INTO Icons(ID, URL) VALUES(?, ?)', [ID, IconURL], (err) => {
-            if (err) return console.log(err.message);
-            console.log(`A row has been inserted Icons: (${ID}, ${IconURL})`);
-        });
-        return IconURL
-    }
-    return ""
-}
-
 // Loops through the Commodities.json to find the lowest price avaliable.
 // Luckily Blizzard stores the last entries with the cheapest price.
 // TODO Figure out If Item is a Commodity or Not, then search a specific Auction House Data.
 function GetItemPrice(id: number):number {
     let price: number = 0;
-    for (let i = 0; i < ahjson.auctions.length; i++) {
-        if (ahjson.auctions[i].item.id == id) {
-            if (price == 0 || ahjson.auctions[i].unit_price < price) {
-                price = ahjson.auctions[i].unit_price
+    for (let i = 0; i < Commodities.auctions.length; i++) {
+        if (Commodities.auctions[i].item.id == id) {
+            if (price == 0 || Commodities.auctions[i].unit_price < price) {
+                price = Commodities.auctions[i].unit_price
             }
         }
     }

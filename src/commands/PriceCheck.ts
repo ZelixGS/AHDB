@@ -31,6 +31,21 @@ export const pricecheck: Command = {
     },
 }
 
+const Emoji_R1: string = '<:R1:1082850436953952467>'
+const Emoji_R2: string = '<:R2:1082850434265391114>'
+const Emoji_R3: string = '<:R3:1082850436136054914>'
+
+const Emoji_R4: string = '<:R4:1082833804634357790>'
+const Emoji_R5: string = '<:R5:1082833805544525974>'
+const Emoji_Hammer: string = '<:Craft:1082852611268563058>'
+const Emoji_GoldCoin: string = '<:Coin:1082823820475375676>'
+const Emoji_SilverCoin: string = '<:CoinSilver:1082855901150580786>'
+const Emoji_CopperCoin: string = '<:CoinCopper:1082855899674185778>'
+const Emoji_Ingot: string = '<:Ignot:1082823818952855562>'
+const Emoji_Tree: string = '<:Tree:1082823822325067786>'
+const Emoji_Food: string = '<:Food:1082823817782644796>'
+const Emoji_Time: string = '<:Time:1082823815710650379>'
+
 function BuildAHEmbed(Item: ItemData): EmbedBuilder {
     // console.log(Item)
     //Create Embed with Minimum Requirements
@@ -39,31 +54,46 @@ function BuildAHEmbed(Item: ItemData): EmbedBuilder {
     .setURL(`https://www.wowhead.com/item=${Item.ID}`)
     .setTimestamp()
     .setColor(QualityToColor(Item.Quality))
-
-    if (Item.Description != null) Embed.setDescription(Item.Description)
+    
+    
     if (Item.Icon != null)  Embed.setThumbnail(Item.Icon)
-    if (Item.Credit != null) Embed.setFooter({ text: `Recipe Added by ${Item.Credit}`})
+
+    
 
     //Price Builder
     let desc: string = "";
-    if (Item.Price != null && Item.Price > 0) desc += `:scales: Auction:\t${ToWoWGold(Item.Price)}`
+    if (Item.R1Price != null && Item.R2Price != null && Item.R3Price != null) {
+        desc += `${Emoji_R1} Auction:\t${ToWoWGold(Item.R1Price)}`
+        desc += `\n${Emoji_R2} Auction:\t${ToWoWGold(Item.R2Price)}`
+        desc += `\n${Emoji_R3} Auction:\t${ToWoWGold(Item.R3Price)}`
+    } else {
+        if (Item.Price != null && Item.Price > 0) desc += `${Emoji_GoldCoin} Auction:\t${ToWoWGold(Item.Price)}`
+    }
+
     if (Item.Total != null) {
         if (desc.length > 1) desc += '\n'   
-        desc += `:hammer_pick: Crafted:\t${ToWoWGold(Item.Total)}`
+        desc += `${Emoji_Hammer} Crafted:\t${ToWoWGold(Item.Total)}`
     }
-    if (Item.PurchasedPrice != null) {
-        if (desc.length > 1) desc += '\n'   
-        desc += `:coin: Vendor:\t${ToWoWGold(Item.PurchasedPrice)}`
+    if (Item.Description != null) {
+        if (desc.length > 1) desc += '\n'
+        Embed.setDescription(Item.Description)
     }
-    if (desc.length > 1) Embed.addFields( { name: ':coin: Prices :coin:', value: desc } );
-    
+    if (desc.length > 1) Embed.setDescription( desc );
+
     if (Item.Materials != null) {
         Embed.addFields( { name: " ", value: ` `})
-        Embed.addFields( { name: ":scroll: Materials :scroll:", value: ` `})
+        Embed.addFields( { name: `${Emoji_Ingot} Materials ${Emoji_Ingot}`, value: ` `})
         for (const Material of Item.Materials) {
-            Embed.addFields({ name: ` `, value: `${Material.Amount}x [${Material.Name}](https://www.wowhead.com/item=${Material.ID})\n:scales:: ${ToWoWGold(Material.Price)}\n:money_with_wings:: ${ToWoWGold(Material.Price * Material.Amount)}`})
+            Embed.addFields({ name: ` `, value: `${ Material.Amount}x [__**${Material.Name}**__](https://www.wowhead.com/item=${Material.ID})\n>>> ${Emoji_SilverCoin} Unit: ${ToWoWGold(Material.Price)}\n${Emoji_GoldCoin} Total: ${ToWoWGold(Material.Price * Material.Amount)}`})
         }
     }
+
+
+    //Footer Builder
+    let minutesago = Math.floor(Math.floor((Date.now() - Item.DataAge)/1000)/60)
+    let footer: string = `Auction House Data was pulled: ${minutesago}m ago.`;
+    if (Item.Credit != null) footer += `\nRecipe Added by ${Item.Credit}`
+    Embed.setFooter( { text: footer} )
     return Embed
 }
 
