@@ -1,2 +1,1 @@
-# AHDB
- Auction House Discord Bot
+# Discord Auction House Bot
